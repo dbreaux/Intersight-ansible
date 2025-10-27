@@ -1,6 +1,6 @@
 # Cisco Intersight Server Profile Template Automation
 
-This Ansible playbook automates the creation and management of Cisco Intersight Server Profile Templates and derived Server Profiles.
+This Ansible playbook automates the creation and management of a basic Cisco Intersight Server Profile Template and derived Server Profiles.
 
 ## Features
 
