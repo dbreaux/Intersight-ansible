@@ -1,0 +1,90 @@
+#
+# Include tasks for deriving server profiles from a template
+# This file handles the creation of individual server profiles from a server profile template
+#
+
+# Get the Profile Moid with robust error handling
+- name: "Get {{ template_name }}_DERIVED-{{ item }} Profile Moid"
+  cisco.intersight.intersight_rest_api:
+    api_private_key: "{{ lookup('file', intersight_auth.secret_key_file) }}"
+    api_key_id: "{{ intersight_auth.api_key_id }}"
+    resource_path: /server/Profiles
+    query_params:
+      $filter: "Name eq '{{ template_name }}_DERIVED-{{ item }}'"
+  register: profile_resp
+  failed_when: false
+
+# Debug the response to see what we got
+- name: "Debug profile response for {{ template_name }}_DERIVED-{{ item }}"
+  debug:
+    msg: 
+      - "Profile query successful: {{ not profile_resp.failed }}"
+      - "Profile exists: {{ profile_resp.api_response is defined and profile_resp.api_response.Name is defined }}"
+      - "Profile Moid: {{ profile_resp.api_response.Moid | default('NOT FOUND') }}"
+      - "Query failed: {{ profile_resp.failed | default(false) }}"
+
+# Determine if we should create the profile
+- name: "Determine if profile should be created"
+  set_fact:
+    should_create_profile: >-
+      {{
+        not profile_resp.failed and 
+        (profile_resp.api_response is not defined or profile_resp.api_response.Name is not defined)
+      }}
+
+- name: "Debug creation decision for {{ template_name }}_DERIVED-{{ item }}"
+  debug:
+    msg: "Will create profile: {{ should_create_profile }}"
+
+# Derive profiles from template (only if query succeeded AND profile doesn't exist)
+- name: "POST to derive {{ template_name }}_DERIVED-{{ item }}"
+  cisco.intersight.intersight_rest_api:
+    api_private_key: "{{ lookup('file', intersight_auth.secret_key_file) }}"
+    api_key_id: "{{ intersight_auth.api_key_id }}"
+    resource_path: /bulk/MoCloners
+    update_method: post
+    api_body: {
+      "Sources": [
+        {
+          "ClassId": "mo.MoRef",
+          "ObjectType": "server.ProfileTemplate",
+          "Moid": "{{ template_resp.api_response.Moid }}"
+        }
+      ],
+      "Targets": [
+        {
+          "Name": "{{ item if profile_names is defined else template_name ~ '_DERIVED-' ~ item }}",
+          "ObjectType": "server.Profile",
+          "Organization": {
+            "Moid": "{{ org_resp.api_response.Moid }}"
+          },
+          "ClassId": "server.Profile"
+        }
+      ]
+    }
+  when: should_create_profile
+  register: derive_result
+
+# POST updates to derived profiles if template was changed
+- name: "POST to update {{ template_name }}_DERIVED-{{ item }}"
+  cisco.intersight.intersight_rest_api:
+    api_private_key: "{{ lookup('file', intersight_auth.secret_key_file) }}"
+    api_key_id: "{{ intersight_auth.api_key_id }}"
+    resource_path: /bulk/MoMergers
+    update_method: post
+    api_body: {
+      "Sources": [
+        {
+          "ObjectType": "server.ProfileTemplate",
+          "Moid": "{{ template_resp.api_response.Moid }}"
+        }
+      ],
+      "Targets": [
+        {
+          "ObjectType": "server.Profile",
+          "Moid": "{{ profile_resp.api_response.Moid }}"
+        }
+      ],
+      "MergeAction":"Replace"
+    }
+  when: not profile_resp.failed and profile_resp.api_response is defined and profile_resp.api_response.Name is defined and template_resp.changed

@@ -1,0 +1,151 @@
+---
+#
+# Cisco Intersight Server Profile Template Management
+# This playbook creates a server profile template and derives multiple server profiles from it
+#
+- name: "Configure Server Profile Template"
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  collections:
+    - cisco.intersight
+  vars_files:
+    - ./intersight-credentials.yml
+  vars:
+    # CUSTOMIZE THESE VARIABLES FOR YOUR ENVIRONMENT
+    template_name: YOUR_TEMPLATE_NAME                    # e.g., "VMLAB_Template"
+    org_name: default                                    # Your Intersight organization name
+    imc_access_policy: YOUR_ACCESS_POLICY_NAME           # e.g., "UCS-X-IMC-Access-OOB"
+    ntp_policy: YOUR_NTP_POLICY_NAME                     # e.g., "Lab-NTP-Policy"
+    uuid_pool: YOUR_UUID_POOL_NAME                       # e.g., "IMM-UUID-Pool"
+    num_profiles: 4                                      # Number of profiles to derive from template
+    
+  tasks:
+    # Get the Organization Moid
+    - name: "Get Organization Moid"
+      cisco.intersight.intersight_rest_api:
+        api_private_key: "{{ lookup('file', intersight_auth.secret_key_file) }}"
+        api_key_id: "{{ intersight_auth.api_key_id }}"
+        resource_path: /organization/Organizations
+        query_params:
+          $filter: "Name eq '{{ org_name }}'"
+      register: org_resp
+      
+    # Get the Access Policy
+    - name: "Get Access Policy Moid"
+      cisco.intersight.intersight_rest_api:
+        api_private_key: "{{ lookup('file', intersight_auth.secret_key_file) }}"
+        api_key_id: "{{ intersight_auth.api_key_id }}"
+        resource_path: /access/Policies
+        query_params:
+          $filter: "Name eq '{{ imc_access_policy }}'"
+      register: access_resp
+      
+    # Get the NTP Policy
+    - name: "Get NTP Policy Moid"
+      cisco.intersight.intersight_rest_api:
+        api_private_key: "{{ lookup('file', intersight_auth.secret_key_file) }}"
+        api_key_id: "{{ intersight_auth.api_key_id }}"
+        resource_path: /ntp/Policies
+        query_params:
+          $filter: "Name eq '{{ ntp_policy }}'"
+      register: ntp_resp
+      
+    # Get the UUID Pool
+    - name: "Get UUID Pool Moid"
+      cisco.intersight.intersight_rest_api:
+        api_private_key: "{{ lookup('file', intersight_auth.secret_key_file) }}"
+        api_key_id: "{{ intersight_auth.api_key_id }}"
+        resource_path: /uuidpool/Pools
+        query_params:
+          $filter: "Name eq '{{ uuid_pool }}'"
+      register: uuid_resp
+      
+    # Get existing Template (used when skipping creation)
+    - name: "Get Server Profile Template (if exists)"
+      cisco.intersight.intersight_rest_api:
+        api_private_key: "{{ lookup('file', intersight_auth.secret_key_file) }}"
+        api_key_id: "{{ intersight_auth.api_key_id }}"
+        resource_path: /server/ProfileTemplates
+        query_params:
+          $filter: "Name eq '{{ template_name }}'"
+        return_list: true
+      register: template_get_resp
+      failed_when: false
+
+    # Check if template exists and set a fact
+    - name: "Check if template exists"
+      set_fact:
+        template_exists: "{{ template_get_resp.api_response | length > 0 }}"
+        existing_template: "{{ template_get_resp.api_response[0] if template_get_resp.api_response | length > 0 else {} }}"
+
+    - name: "Debug template status"
+      debug:
+        msg:
+          - "Template exists: {{ template_exists }}"
+          - "Template name: {{ existing_template.Name | default('NOT FOUND') }}"
+          - "Template usage count: {{ existing_template.UsageCount | default(0) }}"
+
+    # Config SP Template using Policy Buckets - ONLY if it doesn't exist
+    - name: "Configure Server Profile Template"
+      cisco.intersight.intersight_rest_api:
+        api_private_key: "{{ lookup('file', intersight_auth.secret_key_file) }}"
+        api_key_id: "{{ intersight_auth.api_key_id }}"
+        resource_path: /server/ProfileTemplates
+        update_method: post
+        api_body: {
+          "Name": "{{ template_name }}",
+          "Organization": {
+            "Moid": "{{ org_resp.api_response.Moid }}"
+          },
+          "PolicyBucket": [
+            {
+              "Moid": "{{ ntp_resp.api_response.Moid }}",
+              "ObjectType": "ntp.Policy"
+            },
+            {
+              "Moid": "{{ access_resp.api_response.Moid }}",
+              "ObjectType": "access.Policy"
+            }
+          ],
+          "Tags": [],
+          "TargetPlatform": "FIAttached",
+          "UuidAddressType": "POOL",
+          "UuidPool": {
+            "Moid": "{{ uuid_resp.api_response.Moid }}",
+            "ObjectType": "uuidpool.Pool"
+          }
+        }
+      register: template_resp
+      when: not template_exists and not skip_template_creation | default(false)
+
+    # Use existing template if it exists
+    - name: "Use existing template response"
+      ansible.builtin.set_fact:
+        template_resp:
+          api_response: "{{ existing_template }}"
+          changed: false
+      when: template_exists
+
+    - name: "Template configuration summary"
+      debug:
+        msg:
+          - "Template action: {{ 'Used existing' if template_exists else 'Created new' }}"
+          - "Template Moid: {{ template_resp.api_response.Moid }}"
+          - "Template usage count: {{ template_resp.api_response.UsageCount | default(0) }}"
+      
+    # If user asked to skip template creation, ensure the template exists and use it
+    - name: "Fail if template missing when skip_template_creation is true"
+      ansible.builtin.fail:
+        msg: "Template '{{ template_name }}' not found in Intersight and skip_template_creation is true."
+      when: skip_template_creation | default(false) and (template_get_resp.api_response is not defined or template_get_resp.api_response | length == 0)
+
+    - name: "Use existing template response when skipping creation"
+      ansible.builtin.set_fact:
+        template_resp: "{{ template_get_resp }}"
+      when: skip_template_creation | default(false)
+      
+    # Derive profiles from template (if profiles don't already exist)
+    - name: "Derive Profiles from {{ template_name }}"
+      ansible.builtin.include_tasks: derive_profiles.yml
+      loop: "{{ profile_names | default(range(1, (num_profiles | int) + 1) | list) }}"
