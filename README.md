@@ -36,7 +36,7 @@ pip3 install intersight-auth requests
 3. Configure Credentials
     
     Copy the credentials template:
-	cp intersight_credentials.yml.template intersight-credentials.yml
+	cp intersight_credentials.yml.template intersight_credentials.yml
    
      Edit intersight_credentials.yml and add your:
 
