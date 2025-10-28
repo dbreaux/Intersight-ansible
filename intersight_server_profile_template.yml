@@ -10,7 +10,7 @@
   collections:
     - cisco.intersight
   vars_files:
-    - ./intersight-credentials.yml
+    - ./intersight_credentials.yml
   vars:
     # CUSTOMIZE THESE VARIABLES FOR YOUR ENVIRONMENT
     template_name: YOUR_TEMPLATE_NAME                    # e.g., "VMLAB_Template"
