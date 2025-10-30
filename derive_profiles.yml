@@ -1,9 +1,8 @@
 #
-# Include tasks for deriving server profiles from a template
-# This file handles the creation of individual server profiles from a server profile template
+# include_tasks for deriving profiles from a template
 #
 
-# Get the Profile Moid with robust error handling
+# Get the Profile Moid - FIXED VERSION with better error handling
 - name: "Get {{ template_name }}_DERIVED-{{ item }} Profile Moid"
   cisco.intersight.intersight_rest_api:
     api_private_key: "{{ lookup('file', intersight_auth.secret_key_file) }}"
@@ -64,6 +63,9 @@
     }
   when: should_create_profile
   register: derive_result
+  retries: 3
+  delay: 5
+  until: derive_result is succeeded
 
 # POST updates to derived profiles if template was changed
 - name: "POST to update {{ template_name }}_DERIVED-{{ item }}"
@@ -88,3 +90,15 @@
       "MergeAction":"Replace"
     }
   when: not profile_resp.failed and profile_resp.api_response is defined and profile_resp.api_response.Name is defined and template_resp.changed
+  register: update_result
+  retries: 3
+  delay: 5
+  until: update_result succeeded
+
+# Summary of what happened
+- name: "Profile {{ template_name }}_DERIVED-{{ item }} Summary"
+  debug:
+    msg:
+      - "Profile action: {{ 'Created' if derive_result.changed | default(false) else 'Skipped/Existing' }}"
+      - "Update action: {{ 'Updated' if update_result.changed | default(false) else 'No update needed' }}"
+      - "Profile ready for use"
