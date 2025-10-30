@@ -93,7 +93,7 @@
   register: update_result
   retries: 3
   delay: 5
-  until: update_result secceeded
+  until: update_result succeeded
 
 # Summary of what happened
 - name: "Profile {{ template_name }}_DERIVED-{{ item }} Summary"
