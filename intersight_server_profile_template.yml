@@ -118,6 +118,9 @@
         }
       register: template_resp
       when: not template_exists and not skip_template_creation | default(false)
+      retries: 3
+      delay: 5
+      until: template_resp is succeeded
 
     # Use existing template if it exists
     - name: "Use existing template response"
